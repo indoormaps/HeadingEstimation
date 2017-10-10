@@ -170,7 +170,7 @@ public class StepDetectionProvider {
 							newsum++;
 							
 							long currentTime=System.currentTimeMillis() ;
-							if ((currentTime- lastTurnTime) / 1000> 1) {
+							if ((currentTime- lastTurnTime) / 250> 1) {
 								lastTurnTime = currentTime;
 //								Toast.makeText(mContext, "检测到步子 "+newsum , Toast.LENGTH_SHORT).show();
 								stepDetectionCallback.onStepDetected(newsum);
@@ -193,7 +193,7 @@ public class StepDetectionProvider {
 							if ((w - x) < 300 && (w - x) > 20) {
 								newsum++;
 								long currentTime=System.currentTimeMillis() ;
-								if ((currentTime- lastTurnTime) / 1000> 1) {
+								if ((currentTime- lastTurnTime) / 250> 1) {
 									lastTurnTime = currentTime;
 //									Toast.makeText(mContext, "检测到步子 "+newsum , Toast.LENGTH_SHORT).show();
 									stepDetectionCallback.onStepDetected(newsum);
@@ -206,7 +206,7 @@ public class StepDetectionProvider {
 
 								newsum++;
 								long currentTime=System.currentTimeMillis() ;
-								if ((currentTime- lastTurnTime) / 1000> 1) {
+								if ((currentTime- lastTurnTime) / 250> 1) {
 									lastTurnTime = currentTime;
 //									Toast.makeText(mContext, "检测到步子 "+newsum , Toast.LENGTH_SHORT).show();
 									stepDetectionCallback.onStepDetected(newsum);
@@ -218,7 +218,7 @@ public class StepDetectionProvider {
 							} else if ((y - z) < 300 && (y - z) > 20) {
 								newsum++;
 								long currentTime=System.currentTimeMillis() ;
-								if ((currentTime- lastTurnTime) / 1000> 1) {
+								if ((currentTime- lastTurnTime) / 250> 1) {
 									lastTurnTime = currentTime;
 //									Toast.makeText(mContext, "检测到步子 "+newsum , Toast.LENGTH_SHORT).show();
 									stepDetectionCallback.onStepDetected(newsum);
@@ -230,7 +230,7 @@ public class StepDetectionProvider {
 							} else if ((z - w) < 300 && (z - w) > 20) {
 								newsum++;
 								long currentTime=System.currentTimeMillis() ;
-								if ((currentTime- lastTurnTime) / 1000> 1) {
+								if ((currentTime- lastTurnTime) / 250> 1) {
 									lastTurnTime = currentTime;
 //									Toast.makeText(mContext, "检测到步子 "+newsum , Toast.LENGTH_SHORT).show();
 									stepDetectionCallback.onStepDetected(newsum);
@@ -241,7 +241,7 @@ public class StepDetectionProvider {
 							} else {
 								newsum++;
 								long currentTime=System.currentTimeMillis() ;
-								if ((currentTime- lastTurnTime) / 1000> 1) {
+								if ((currentTime- lastTurnTime) / 250> 1) {
 									lastTurnTime = currentTime;
 //									Toast.makeText(mContext, "检测到步子 "+newsum , Toast.LENGTH_SHORT).show();
 									stepDetectionCallback.onStepDetected(newsum);

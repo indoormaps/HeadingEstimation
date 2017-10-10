@@ -11,6 +11,10 @@ public class TriaxialData {
         this(0, 0, 0, 0);
     }
 
+    public TriaxialData(double x, double y, double z) {
+        this(x, y, z, 0l);
+    }
+
     public TriaxialData(double x, double y, double z, long timestamp) {
         this.x = x;
         this.y = y;
