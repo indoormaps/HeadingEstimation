@@ -13,6 +13,7 @@ import android.os.Bundle;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.TextView;
@@ -26,6 +27,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.security.spec.EncodedKeySpec;
 import java.util.ArrayList;
+import java.util.List;
 
 import Jama.*;
 
@@ -42,28 +44,44 @@ import cn.ict.headingestimation.util.MadgwickAHRS;
 import cn.ict.headingestimation.util.SensorDataLogFile;
 import cn.ict.headingestimation.util.StepDetectionProvider;
 import cn.ict.headingestimation.util.StepDetectionProvider.StepDetectedCallBack;
+import lecho.lib.hellocharts.gesture.ContainerScrollType;
+import lecho.lib.hellocharts.model.Axis;
+import lecho.lib.hellocharts.model.Line;
+import lecho.lib.hellocharts.model.LineChartData;
+import lecho.lib.hellocharts.model.PointValue;
+import lecho.lib.hellocharts.model.ValueShape;
+import lecho.lib.hellocharts.model.Viewport;
+import lecho.lib.hellocharts.view.LineChartView;
 
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener, SensorEventListener {
 
-    private boolean logdata = false;
-
     private static final double NS2S = 1.0f / 1000000000.0;
     private final int ACC = 1, GYR = 2, MAG = 3, PATH = 4, ORIENTATION = 5;
-    private double viewWidth = 960;
     private double RAD2DEG = 180 / Math.PI;
-    private double STEP_LENGTH = 6;
+
+    private boolean logdata = Config.logdata;
+    private final static double viewWidth = Config.viewWidth;
+    private final static double STEP_LENGTH = Config.STEP_LENGTH;
     private ArrayList<Point> path = new ArrayList<Point>();
     private ArrayList<Point> gyrPath = new ArrayList<Point>();
     private ArrayList<Point> magPath = new ArrayList<Point>();
-//    private ArrayList<Double> gyrOris = new ArrayList<Double>();
-//    private ArrayList<Double> magOris = new ArrayList<Double>();
-    private ArrayList<TriaxialData> oris = new ArrayList<TriaxialData>();
 
-    private int accCount = 0, gyrCount = 0, magCount = 0, gCount = 0;
+    private ArrayList<PointValue> gyrOris = new ArrayList<>();
+    private ArrayList<PointValue> magOris = new ArrayList<>();
+    private ArrayList<PointValue> oris = new ArrayList<>();
+    private ArrayList<Line> lines = new ArrayList<>();
+    private Axis axisX, axisY;
+    private LineChartData lineChartData;
+    private LineChartView lineChartView;
+
+    private int accCount = 0, gyrCount = 0, magCount = 0, gCount = 0, orientationCount = 0;
     private Acceleration gravity = null;
 
-    double midAccHeight = 120, midGyrHeight = 120, midMagHeight = 120, midPathHeight = 240;
+    private double midAccHeight = Config.midAccHeight;
+    private double midGyrHeight = Config.midGyrHeight;
+    private double midMagHeight = Config.midMagHeight;
+    private double midPathHeight = Config.midPathHeight;
 
     private double[] RMArray = new double[9];
     private double[] IMArray = new double[9];
@@ -76,16 +94,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private double lastGyrOrientation = 0;
     private double lastMagOrientation = 720;
     private double lastStepOrientation = 720;
-    private double thetaCThreshold = 15;
-    private double thetaMThreshold = 30;
+    private double thetaCThreshold = Config.thetaCThreshold;
+    private double thetaMThreshold = Config.thetaMThreshold;
 
     private Matrix RM, IM;
 
     private boolean initAngle = false;
 
-    private TextView accTxt, gyrTxt, magTxt, infoTxt;
-    private SurfaceView accView, gyrView, magView, pathView;
-    private SurfaceHolder accHolder, gyrHolder, magHolder, pathHolder;
+    private TextView gyrTxt, magTxt, infoTxt;
+//    private SurfaceView gyrView, magView;
+    private SurfaceView pathView;
+//    private SurfaceHolder gyrHolder, magHolder;
+    private SurfaceHolder pathHolder;
     private Button startBtn, stopBtn, clearBtn;
 
     private ArrayList<Acceleration> acc = new ArrayList<Acceleration>();
@@ -93,7 +113,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private ArrayList<MagneticField> mag = new ArrayList<MagneticField>();
     private MagneticField lastMag = new MagneticField();
 
-    private final static int DELAY = 500; // 1000000 / 500 = 2000Hz
+    private final static int DELAY = Config.DELAY;
 
     private SensorManager sensorManager;
     private Sensor accSensor, gyrSensor, magSensor;
@@ -116,7 +136,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         bindViews();
         clearTrack();
         getSensors();
-        SensorDataLogFile.trace("hello");
         if (logdata) getFileReady();
     }
 
@@ -132,22 +151,21 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         try {
             fos = new FileOutputStream(file);
         } catch (IOException e) {
-//            Toast.makeText(this, "FileOutput Error", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "FileOutput Error", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void bindViews() {
-        accTxt = (TextView) findViewById(R.id.acc_txt);
+        initChartView();
+
         gyrTxt = (TextView) findViewById(R.id.gyr_txt);
         magTxt = (TextView) findViewById(R.id.mag_txt);
         infoTxt = (TextView) findViewById(R.id.info);
-        accView = (SurfaceView) findViewById(R.id.acc_view);
-        gyrView = (SurfaceView) findViewById(R.id.gyr_view);
-        magView = (SurfaceView) findViewById(R.id.mag_view);
+//        gyrView = (SurfaceView) findViewById(R.id.gyr_view);
+//        magView = (SurfaceView) findViewById(R.id.mag_view);
         pathView = (SurfaceView) findViewById(R.id.path_view);
-        accHolder = accView.getHolder();
-        gyrHolder = gyrView.getHolder();
-        magHolder = magView.getHolder();
+//        gyrHolder = gyrView.getHolder();
+//        magHolder = magView.getHolder();
         pathHolder = pathView.getHolder();
         startBtn = (Button) findViewById(R.id.start_btn);
         stopBtn = (Button) findViewById(R.id.stop_btn);
@@ -158,6 +176,53 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         stopBtn.setEnabled(false);
         clearBtn.setOnClickListener(this);
         clearBtn.setEnabled(false);
+    }
+
+    private void initChartView() {
+        lineChartView = (LineChartView) findViewById(R.id.orientation_chart);
+        axisX = new Axis();
+        axisX.setLineColor(Color.BLACK);
+        axisX.setTextColor(Color.BLACK);
+        axisY = new Axis();
+        axisY.setLineColor(Color.BLACK);
+        axisY.setTextColor(Color.BLACK);
+        lineChartData = initDatas(null);
+        lineChartView.setLineChartData(lineChartData);
+        Viewport port = initViewPort(0, 50);
+        lineChartView.setBackgroundColor(Color.WHITE);
+        lineChartView.setCurrentViewportWithAnimation(port);
+        lineChartView.setInteractive(true);
+        lineChartView.setScrollEnabled(true);
+        lineChartView.setValueTouchEnabled(true);
+        lineChartView.setFocusableInTouchMode(true);
+        lineChartView.setViewportCalculationEnabled(false);
+        lineChartView.setContainerScrollEnabled(true, ContainerScrollType.HORIZONTAL);
+        lineChartView.startDataAnimation();
+    }
+
+    private LineChartData initDatas(ArrayList<Line> lines) {
+        LineChartData data = new LineChartData(lines);
+        data.setAxisYLeft(axisY);
+        data.setAxisXBottom(axisX);
+        return data;
+    }
+
+    private Viewport initViewPort(float left, float right) {
+        Viewport port = new Viewport();
+        port.top = 220;
+        port.bottom = -220;
+        port.left = left;
+        port.right = right;
+        return port;
+    }
+
+    private Viewport initMaxViewPort(float right) {
+        Viewport port = new Viewport();
+        port.top = 220;
+        port.bottom = -220;
+        port.left = 0;
+        port.right = right + 50;
+        return port;
     }
 
     private void getSensors() {
@@ -187,34 +252,37 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         Paint xPaint = new Paint(), yPaint = new Paint(), zPaint = new Paint();
         xPaint.setStrokeWidth(3); yPaint.setStrokeWidth(3); zPaint.setStrokeWidth(3);
         xPaint.setColor(Color.RED); yPaint.setColor(Color.GREEN); zPaint.setColor(Color.BLUE);
+        Paint totPaint = new Paint();
+        totPaint.setStrokeWidth(3);
+        totPaint.setColor(Color.BLACK);
         switch (id) {
-            case ACC:
-                Canvas accCanvas = accHolder.lockCanvas(null);
-                accCanvas.drawColor(Color.WHITE);
-                for (int i = 1; i < acc.size(); i++) {
-                    Acceleration accTemp1 = acc.get(i - 1);
-                    accTemp1 = new Acceleration(midAccHeight - accTemp1.x / 20 * midAccHeight, midAccHeight - accTemp1.y / 20 * midAccHeight, midAccHeight - accTemp1.z / 20 * midAccHeight, accTemp1.timestamp);
-                    Acceleration accTemp2 = acc.get(i);
-                    accTemp2 = new Acceleration(midAccHeight - accTemp2.x / 20 * midAccHeight, midAccHeight - accTemp2.y / 20 * midAccHeight, midAccHeight - accTemp2.z / 20 * midAccHeight, accTemp2.timestamp);
-                    accCanvas.drawLine(i - 1, (float) accTemp1.x, i, (float) accTemp2.x, xPaint);
-                    accCanvas.drawLine(i - 1, (float) accTemp1.y, i, (float) accTemp2.y, yPaint);
-                    accCanvas.drawLine(i - 1, (float) accTemp1.z, i, (float) accTemp2.z, zPaint);
-                }
-                accHolder.unlockCanvasAndPost(accCanvas);
-                break;
+//            case ACC:
+//                Canvas accCanvas = accHolder.lockCanvas(null);
+//                accCanvas.drawColor(Color.WHITE);
+//                for (int i = 1; i < acc.size(); i++) {
+//                    Acceleration accTemp1 = acc.get(i - 1);
+//                    accTemp1 = new Acceleration(midAccHeight - accTemp1.x / 20 * midAccHeight, midAccHeight - accTemp1.y / 20 * midAccHeight, midAccHeight - accTemp1.z / 20 * midAccHeight, accTemp1.timestamp);
+//                    Acceleration accTemp2 = acc.get(i);
+//                    accTemp2 = new Acceleration(midAccHeight - accTemp2.x / 20 * midAccHeight, midAccHeight - accTemp2.y / 20 * midAccHeight, midAccHeight - accTemp2.z / 20 * midAccHeight, accTemp2.timestamp);
+//                    accCanvas.drawLine(i - 1, (float) accTemp1.x, i, (float) accTemp2.x, xPaint);
+//                    accCanvas.drawLine(i - 1, (float) accTemp1.y, i, (float) accTemp2.y, yPaint);
+//                    accCanvas.drawLine(i - 1, (float) accTemp1.z, i, (float) accTemp2.z, zPaint);
+//                }
+//                accHolder.unlockCanvasAndPost(accCanvas);
+//                break;
             case GYR:
-                Canvas gyrCanvas = gyrHolder.lockCanvas(null);
-                gyrCanvas.drawColor(Color.WHITE);
-                for (int i = 1; i < gyr.size(); i++) {
-                    AngularVelocity gyrTemp1 = gyr.get(i - 1);
-                    gyrTemp1 = new AngularVelocity(midGyrHeight - gyrTemp1.x / 15 * midGyrHeight, midGyrHeight - gyrTemp1.y / 15 * midGyrHeight, midGyrHeight - gyrTemp1.z / 15 * midGyrHeight, gyrTemp1.timestamp);
-                    AngularVelocity gyrTemp2 = gyr.get(i);
-                    gyrTemp2 = new AngularVelocity(midGyrHeight - gyrTemp2.x / 15 * midGyrHeight, midGyrHeight - gyrTemp2.y / 15 * midGyrHeight, midGyrHeight - gyrTemp2.z / 15 * midGyrHeight, gyrTemp2.timestamp);
-                    gyrCanvas.drawLine(i - 1, (float) gyrTemp1.x, i, (float) gyrTemp2.x, xPaint);
-                    gyrCanvas.drawLine(i - 1, (float) gyrTemp1.y, i, (float) gyrTemp2.y, yPaint);
-                    gyrCanvas.drawLine(i - 1, (float) gyrTemp1.z, i, (float) gyrTemp2.z, zPaint);
-                }
-                gyrHolder.unlockCanvasAndPost(gyrCanvas);
+//                Canvas gyrCanvas = gyrHolder.lockCanvas(null);
+//                gyrCanvas.drawColor(Color.WHITE);
+//                for (int i = 1; i < gyr.size(); i++) {
+//                    AngularVelocity gyrTemp1 = gyr.get(i - 1);
+//                    gyrTemp1 = new AngularVelocity(midGyrHeight - gyrTemp1.x / 15 * midGyrHeight, midGyrHeight - gyrTemp1.y / 15 * midGyrHeight, midGyrHeight - gyrTemp1.z / 15 * midGyrHeight, gyrTemp1.timestamp);
+//                    AngularVelocity gyrTemp2 = gyr.get(i);
+//                    gyrTemp2 = new AngularVelocity(midGyrHeight - gyrTemp2.x / 15 * midGyrHeight, midGyrHeight - gyrTemp2.y / 15 * midGyrHeight, midGyrHeight - gyrTemp2.z / 15 * midGyrHeight, gyrTemp2.timestamp);
+//                    gyrCanvas.drawLine(i - 1, (float) gyrTemp1.x, i, (float) gyrTemp2.x, xPaint);
+//                    gyrCanvas.drawLine(i - 1, (float) gyrTemp1.y, i, (float) gyrTemp2.y, yPaint);
+//                    gyrCanvas.drawLine(i - 1, (float) gyrTemp1.z, i, (float) gyrTemp2.z, zPaint);
+//                }
+//                gyrHolder.unlockCanvasAndPost(gyrCanvas);
                 break;
             case MAG:
 //                Canvas magCanvas = magHolder.lockCanvas(null);
@@ -238,37 +306,56 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     p1 = new Point(400 + p1.x, midPathHeight - p1.y);
                     Point p2 = gyrPath.get(i);
                     p2 = new Point(400 + p2.x, midPathHeight - p2.y);
-                    pathCanvas.drawLine((float) p1.x, (float) p1.y, (float) p2.x, (float) p2.y, xPaint);
+                    pathCanvas.drawLine((float) p1.x, (float) p1.y, (float) p2.x, (float) p2.y, zPaint);
                 }
                 for (int i = 1; i < magPath.size(); i++) {
                     Point p1 = magPath.get(i - 1);
                     p1 = new Point(400 + p1.x, midPathHeight - p1.y);
                     Point p2 = magPath.get(i);
                     p2 = new Point(400 + p2.x, midPathHeight - p2.y);
-                    pathCanvas.drawLine((float) p1.x, (float) p1.y, (float) p2.x, (float) p2.y, yPaint);
+                    pathCanvas.drawLine((float) p1.x, (float) p1.y, (float) p2.x, (float) p2.y, xPaint);
                 }
                 for (int i = 1; i < path.size(); i++) {
                     Point p1 = path.get(i - 1);
                     p1 = new Point(400 + p1.x, midPathHeight - p1.y);
                     Point p2 = path.get(i);
                     p2 = new Point(400 + p2.x, midPathHeight - p2.y);
-                    pathCanvas.drawLine((float) p1.x, (float) p1.y, (float) p2.x, (float) p2.y, zPaint);
+                    pathCanvas.drawLine((float) p1.x, (float) p1.y, (float) p2.x, (float) p2.y, totPaint);
                 }
                 pathHolder.unlockCanvasAndPost(pathCanvas);
                 break;
             case ORIENTATION:
-                Canvas magCanvas = magHolder.lockCanvas(null);
-                magCanvas.drawColor(Color.WHITE);
-                for (int i = 1; i < oris.size(); i++) {
-                    TriaxialData magTemp1 = oris.get(i - 1);
-                    magTemp1 = new TriaxialData(midMagHeight - magTemp1.x / 300 * midMagHeight, midMagHeight - magTemp1.y / 300 * midMagHeight, midMagHeight - magTemp1.z / 300 * midMagHeight, magTemp1.timestamp);
-                    TriaxialData magTemp2 = oris.get(i);
-                    magTemp2 = new TriaxialData(midMagHeight - magTemp2.x / 300 * midMagHeight, midMagHeight - magTemp2.y / 300 * midMagHeight, midMagHeight - magTemp2.z / 300 * midMagHeight, magTemp2.timestamp);
-                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.x, i * 10, (float) magTemp2.x, xPaint);
-                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.y, i * 10, (float) magTemp2.y, yPaint);
-                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.z, i * 10, (float) magTemp2.z, zPaint);
+//                Canvas magCanvas = magHolder.lockCanvas(null);
+//                magCanvas.drawColor(Color.WHITE);
+//                for (int i = 1; i < oris.size(); i++) {
+//                    TriaxialData magTemp1 = oris.get(i - 1);
+//                    magTemp1 = new TriaxialData(midMagHeight - magTemp1.x / 300 * midMagHeight, midMagHeight - magTemp1.y / 300 * midMagHeight, midMagHeight - magTemp1.z / 300 * midMagHeight, magTemp1.timestamp);
+//                    TriaxialData magTemp2 = oris.get(i);
+//                    magTemp2 = new TriaxialData(midMagHeight - magTemp2.x / 300 * midMagHeight, midMagHeight - magTemp2.y / 300 * midMagHeight, midMagHeight - magTemp2.z / 300 * midMagHeight, magTemp2.timestamp);
+//                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.x, i * 10, (float) magTemp2.x, xPaint);
+//                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.y, i * 10, (float) magTemp2.y, yPaint);
+//                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.z, i * 10, (float) magTemp2.z, zPaint);
+//                }
+//                magHolder.unlockCanvasAndPost(magCanvas);
+                float x = oris.get(oris.size() - 1).getX();
+                Line gyrLine = new Line(gyrOris).setColor(Color.BLUE).setCubic(false).setStrokeWidth(1).setHasPoints(false);
+                Line magLine = new Line(magOris).setColor(Color.RED).setCubic(false).setStrokeWidth(1).setHasPoints(false);
+                Line oriLine = new Line(oris).setColor(Color.BLACK).setCubic(false).setStrokeWidth(1).setHasPoints(false);
+                lines.clear();
+                lines.add(gyrLine);
+                lines.add(magLine);
+                lines.add(oriLine);
+                lineChartData = initDatas(lines);
+                lineChartView.setLineChartData(lineChartData);
+                Viewport port;
+                if (x > 50) {
+                    port = initViewPort(x - 50, x);
+                } else {
+                    port = initViewPort(0, 50);
                 }
-                magHolder.unlockCanvasAndPost(magCanvas);
+                lineChartView.setCurrentViewport(port);
+                Viewport maxPort = initMaxViewPort(x);
+                lineChartView.setMaximumViewport(maxPort);
                 break;
             default:
                 break;
@@ -289,7 +376,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         path.clear(); path.add(new Point());
 //        gyrOris.clear(); gyrOris.add(0.0);
 //        magOris.clear(); magOris.add(0.0);
-        oris.clear(); oris.add(new TriaxialData());
+//        oris.clear(); oris.add(new TriaxialData());
+        gyrOris.clear();
+        magOris.clear();
+        oris.clear();
         initGyrHeading = 0;
         initGyrStepCount = 0;
         calibrateGyrStepCount = 0;
@@ -303,17 +393,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     private void clearDraw() {
-        Canvas accCanvas = accHolder.lockCanvas(null);
-        Canvas gyrCanvas = gyrHolder.lockCanvas(null);
-        Canvas magCanvas = magHolder.lockCanvas(null);
+//        Canvas gyrCanvas = gyrHolder.lockCanvas(null);
+//        Canvas magCanvas = magHolder.lockCanvas(null);
         Canvas pathCanvas = pathHolder.lockCanvas(null);
-        accCanvas.drawColor(Color.BLACK);
-        gyrCanvas.drawColor(Color.BLACK);
-        magCanvas.drawColor(Color.BLACK);
+//        gyrCanvas.drawColor(Color.BLACK);
+//        magCanvas.drawColor(Color.BLACK);
         pathCanvas.drawColor(Color.BLACK);
-        accHolder.unlockCanvasAndPost(accCanvas);
-        gyrHolder.unlockCanvasAndPost(gyrCanvas);
-        magHolder.unlockCanvasAndPost(magCanvas);
+//        gyrHolder.unlockCanvasAndPost(gyrCanvas);
+//        magHolder.unlockCanvasAndPost(magCanvas);
         pathHolder.unlockCanvasAndPost(pathCanvas);
     }
 
@@ -376,7 +463,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 initGyrMagSum = 0;
                 Toast.makeText(this, "clear magsum", Toast.LENGTH_SHORT).show();
             }
-            if (initGyrStepCount > 5) {
+            if (initGyrStepCount > 10) {
                 initAngle = true;
                 initGyrHeading = initGyrMagSum / initGyrStepCount;
                 initGyrStepCount = 0;
@@ -408,6 +495,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     stepOrientation = fuseOrientations(orientations, weights);
                 }
             }
+            gyrOrientation = stepOrientation;
         } else {
             if (thetaC <= thetaCThreshold && thetaM <= thetaMThreshold ) {
                 double[] orientations = {lastStepOrientation, magOrientation, gyrOrientation};
@@ -415,7 +503,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 stepOrientation = fuseOrientations(orientations, weights);
             } else if (thetaC <= thetaCThreshold && thetaM > thetaMThreshold) {
                 double[] orientations = {magOrientation, gyrOrientation};
-                double[] weights = {0.6, 0.4};
+                double[] weights = {0.4, 0.6};
                 stepOrientation = fuseOrientations(orientations, weights);
             } else if (thetaC > thetaCThreshold && thetaM <= thetaMThreshold) {
                 double[] orientations = {lastStepOrientation, magOrientation};
@@ -427,23 +515,24 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 stepOrientation = fuseOrientations(orientations, weights);
             }
         }
-//        double stepDiff = Math.abs(lastStepOrientation - stepOrientation);
-//        if (stepDiff > 180) stepDiff = 360 - stepDiff;
-//        if (lastStepOrientation != 720 && stepDiff < 20) {
-//            calibrateGyrStepCount++;
+        double stepDiff = Math.abs(lastStepOrientation - stepOrientation);
+        if (stepDiff > 180) stepDiff = 360 - stepDiff;
+        if (lastStepOrientation != 720 && stepDiff < 20) {
+            calibrateGyrStepCount++;
 //            calibrateGyrOrientationSum += stepOrientation;
-//        }
-//        if (calibrateGyrStepCount == 10) {
-//            Toast.makeText(this, "calibrate gyr", Toast.LENGTH_SHORT).show();
-//            gyrOrientation = stepOrientation;
-//            calibrateGyrStepCount = 0;
+        }
+        if (calibrateGyrStepCount == 10) {
+            Toast.makeText(this, "calibrate gyr", Toast.LENGTH_SHORT).show();
+            gyrOrientation = stepOrientation;
+            calibrateGyrStepCount = 0;
 //            calibrateGyrOrientationSum = 0;
-//        }
+        }
 
-//        gyrOris.add(gyrOrientation);
-//        magOris.add(magOrientation);
-        oris.add(new TriaxialData(gyrOrientation, magOrientation, stepOrientation));
-        if (oris.size() > viewWidth) oris.remove(0);
+        gyrOris.add(new PointValue(orientationCount, (float) gyrOrientation));
+        magOris.add(new PointValue(orientationCount, (float) magOrientation));
+        oris.add(new PointValue(orientationCount, (float) stepOrientation));
+        orientationCount++;
+//        if (oris.size() > viewWidth) oris.remove(0);
         draw(ORIENTATION);
 
         lastGyrOrientation = gyrOrientation;
@@ -678,7 +767,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     }
                 }
                 Acceleration gTemp = new Acceleration(event.values[0], event.values[1], event.values[2], event.timestamp);
-                accTxt.setText(String.format("G:   x:%.5f  y:%.5f  z:%.5f", event.values[0], event.values[1], event.values[2]));
                 if (gCount == 10) {
                     gravity = gTemp;
                 } else {
