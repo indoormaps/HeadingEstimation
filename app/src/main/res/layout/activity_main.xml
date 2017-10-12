@@ -11,7 +11,7 @@
         android:id="@+id/orientation_chart"
         android:layout_marginTop="5dp"
         android:layout_width="match_parent"
-        android:layout_height="150dp" />
+        android:layout_height="180dp" />
 
     <TextView
         android:id="@+id/gyr_txt"
@@ -21,12 +21,6 @@
         android:layout_below="@+id/acc_txt"
         android:layout_alignParentStart="true" />
 
-    <!--<SurfaceView-->
-        <!--android:id="@+id/gyr_view"-->
-        <!--android:layout_width="match_parent"-->
-        <!--android:layout_height="80dp"-->
-        <!--/>-->
-
     <TextView
         android:id="@+id/mag_txt"
         android:text="Mag      x:        y:        z:        "
@@ -35,33 +29,33 @@
         android:layout_below="@+id/gyr_txt"
         android:layout_alignParentStart="true" />
 
-    <!--<SurfaceView-->
-        <!--android:id="@+id/mag_view"-->
-        <!--android:layout_width="match_parent"-->
-        <!--android:layout_height="80dp"-->
-        <!--/>-->
-
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
         <Button
             android:id="@+id/start_btn"
-            android:text="Start"
+            android:text="Strt"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
 
         <Button
             android:id="@+id/stop_btn"
-            android:text="Stop"
+            android:text="Stp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
 
         <Button
             android:id="@+id/clear_btn"
-            android:text="Clear"
+            android:text="Clr"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/replay_btn"
+            android:text="Re"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
     </LinearLayout>
 
 
@@ -76,6 +70,6 @@
     <SurfaceView
         android:id="@+id/path_view"
         android:layout_width="match_parent"
-        android:layout_height="250dp"
+        android:layout_height="280dp"
         />
 </LinearLayout>

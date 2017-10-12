@@ -1,5 +1,6 @@
 package cn.ict.headingestimation;
 
+import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -7,41 +8,37 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.os.Build;
 import android.os.Environment;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
-import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.BufferedWriter;
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
+import java.io.FileReader;
 import java.io.IOException;
-import java.security.spec.EncodedKeySpec;
 import java.util.ArrayList;
-import java.util.List;
 
 import Jama.*;
 
-import Jama.util.Maths;
 import cn.ict.headingestimation.data.Acceleration;
 import cn.ict.headingestimation.data.AngularVelocity;
-import cn.ict.headingestimation.data.EulerAngle;
 import cn.ict.headingestimation.data.MagneticField;
 
 import cn.ict.headingestimation.data.Point;
 import cn.ict.headingestimation.data.TriaxialData;
 import cn.ict.headingestimation.util.AngleUtils;
-import cn.ict.headingestimation.util.MadgwickAHRS;
-import cn.ict.headingestimation.util.SensorDataLogFile;
 import cn.ict.headingestimation.util.StepDetectionProvider;
 import cn.ict.headingestimation.util.StepDetectionProvider.StepDetectedCallBack;
 import lecho.lib.hellocharts.gesture.ContainerScrollType;
@@ -49,7 +46,6 @@ import lecho.lib.hellocharts.model.Axis;
 import lecho.lib.hellocharts.model.Line;
 import lecho.lib.hellocharts.model.LineChartData;
 import lecho.lib.hellocharts.model.PointValue;
-import lecho.lib.hellocharts.model.ValueShape;
 import lecho.lib.hellocharts.model.Viewport;
 import lecho.lib.hellocharts.view.LineChartView;
 
@@ -66,6 +62,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private ArrayList<Point> path = new ArrayList<Point>();
     private ArrayList<Point> gyrPath = new ArrayList<Point>();
     private ArrayList<Point> magPath = new ArrayList<Point>();
+    private ArrayList<Point> uncGyrPath = new ArrayList<Point>();
 
     private ArrayList<PointValue> gyrOris = new ArrayList<>();
     private ArrayList<PointValue> magOris = new ArrayList<>();
@@ -78,22 +75,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private int accCount = 0, gyrCount = 0, magCount = 0, gCount = 0, orientationCount = 0;
     private Acceleration gravity = null;
 
-    private double midAccHeight = Config.midAccHeight;
-    private double midGyrHeight = Config.midGyrHeight;
-    private double midMagHeight = Config.midMagHeight;
     private double midPathHeight = Config.midPathHeight;
 
     private double[] RMArray = new double[9];
     private double[] IMArray = new double[9];
     private double[] orientation = new double[3];
     private double initGyrHeading = 0;
-    private int initGyrStepCount = 0;
+    private ArrayList<Double> initGyrMagList = new ArrayList<Double>();
     private int calibrateGyrStepCount = 0;
+    private ArrayList<Double> calibrateGyrMagList = new ArrayList<Double>();
     private double calibrateGyrOrientationSum = 0;
-    private double initGyrMagSum = 0;
     private double lastGyrOrientation = 0;
     private double lastMagOrientation = 720;
     private double lastStepOrientation = 720;
+    private double lastUncalibratedGyrOrientation = 720;
     private double thetaCThreshold = Config.thetaCThreshold;
     private double thetaMThreshold = Config.thetaMThreshold;
 
@@ -102,13 +97,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private boolean initAngle = false;
 
     private TextView gyrTxt, magTxt, infoTxt;
-//    private SurfaceView gyrView, magView;
     private SurfaceView pathView;
-//    private SurfaceHolder gyrHolder, magHolder;
     private SurfaceHolder pathHolder;
-    private Button startBtn, stopBtn, clearBtn;
+    private Button startBtn, stopBtn, clearBtn, reBtn;
 
-    private ArrayList<Acceleration> acc = new ArrayList<Acceleration>();
     private ArrayList<AngularVelocity> gyr = new ArrayList<AngularVelocity>();
     private ArrayList<MagneticField> mag = new ArrayList<MagneticField>();
     private MagneticField lastMag = new MagneticField();
@@ -116,7 +108,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private final static int DELAY = Config.DELAY;
 
     private SensorManager sensorManager;
-    private Sensor accSensor, gyrSensor, magSensor;
+    private Sensor gyrSensor, magSensor;
     private Sensor gSensor;
 
     private File dir;
@@ -133,6 +125,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     private void init() {
+        // 两部手机文件读写的方式不同
+        if (Build.VERSION.RELEASE.equals("6.0")) {
+            Config.device = 2;
+        } else {
+            Config.device = 1;
+        }
         bindViews();
         clearTrack();
         getSensors();
@@ -140,18 +138,26 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     private void getFileReady() {
-        dir = new File(Environment.getExternalStorageDirectory() + "//Heading//");
-        if (!dir.exists()) {
-            Toast.makeText(this, "make dir", Toast.LENGTH_SHORT).show();
-            dir.mkdirs();
+        if (Config.device == Config.DEVICE6) {
+            try {
+                fos = this.openFileOutput("SensorDataLogFile.txt", Context.MODE_PRIVATE);
+            } catch (FileNotFoundException e) {
+                Toast.makeText(this, "output file not found", Toast.LENGTH_SHORT).show();
+            }
         } else {
-            Toast.makeText(this, "exists", Toast.LENGTH_SHORT).show();
-        }
-        File file = new File(Environment.getExternalStorageDirectory()+"//Heading//",String.format("SensorDataLogFile%d.txt", System.currentTimeMillis()));
-        try {
-            fos = new FileOutputStream(file);
-        } catch (IOException e) {
-            Toast.makeText(this, "FileOutput Error", Toast.LENGTH_SHORT).show();
+            dir = new File(Environment.getExternalStorageDirectory() + "//Heading//");
+            if (!dir.exists()) {
+                Toast.makeText(this, "make dir", Toast.LENGTH_SHORT).show();
+                dir.mkdirs();
+            } else {
+                Toast.makeText(this, "exists", Toast.LENGTH_SHORT).show();
+            }
+            File file = new File(Environment.getExternalStorageDirectory()+"//Heading//",String.format("SensorDataLogFile%d.txt", System.currentTimeMillis()));
+            try {
+                fos = new FileOutputStream(file);
+            } catch (IOException e) {
+                Toast.makeText(this, "FileOutput Error", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
@@ -161,21 +167,21 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         gyrTxt = (TextView) findViewById(R.id.gyr_txt);
         magTxt = (TextView) findViewById(R.id.mag_txt);
         infoTxt = (TextView) findViewById(R.id.info);
-//        gyrView = (SurfaceView) findViewById(R.id.gyr_view);
-//        magView = (SurfaceView) findViewById(R.id.mag_view);
+        // 用来画运动轨迹用的view
         pathView = (SurfaceView) findViewById(R.id.path_view);
-//        gyrHolder = gyrView.getHolder();
-//        magHolder = magView.getHolder();
         pathHolder = pathView.getHolder();
         startBtn = (Button) findViewById(R.id.start_btn);
         stopBtn = (Button) findViewById(R.id.stop_btn);
         clearBtn = (Button) findViewById(R.id.clear_btn);
+        reBtn = (Button) findViewById(R.id.replay_btn);
 
         startBtn.setOnClickListener(this);
+        if (!Config.logdata) startBtn.setEnabled(false);
         stopBtn.setOnClickListener(this);
         stopBtn.setEnabled(false);
         clearBtn.setOnClickListener(this);
         clearBtn.setEnabled(false);
+        reBtn.setOnClickListener(this);
     }
 
     private void initChartView() {
@@ -228,21 +234,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private void getSensors() {
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
 
-        accSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         gyrSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         magSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
         gSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
     }
 
     private void regListeners() {
-        sensorManager.registerListener(this, accSensor, DELAY);
         sensorManager.registerListener(this, gyrSensor, DELAY);
         sensorManager.registerListener(this, magSensor, DELAY);
         sensorManager.registerListener(this, gSensor, DELAY);
     }
 
     private void unregListeners() {
-        sensorManager.unregisterListener(this, accSensor);
         sensorManager.unregisterListener(this, gyrSensor);
         sensorManager.unregisterListener(this, magSensor);
         sensorManager.unregisterListener(this, gSensor);
@@ -256,20 +259,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         totPaint.setStrokeWidth(3);
         totPaint.setColor(Color.BLACK);
         switch (id) {
-//            case ACC:
-//                Canvas accCanvas = accHolder.lockCanvas(null);
-//                accCanvas.drawColor(Color.WHITE);
-//                for (int i = 1; i < acc.size(); i++) {
-//                    Acceleration accTemp1 = acc.get(i - 1);
-//                    accTemp1 = new Acceleration(midAccHeight - accTemp1.x / 20 * midAccHeight, midAccHeight - accTemp1.y / 20 * midAccHeight, midAccHeight - accTemp1.z / 20 * midAccHeight, accTemp1.timestamp);
-//                    Acceleration accTemp2 = acc.get(i);
-//                    accTemp2 = new Acceleration(midAccHeight - accTemp2.x / 20 * midAccHeight, midAccHeight - accTemp2.y / 20 * midAccHeight, midAccHeight - accTemp2.z / 20 * midAccHeight, accTemp2.timestamp);
-//                    accCanvas.drawLine(i - 1, (float) accTemp1.x, i, (float) accTemp2.x, xPaint);
-//                    accCanvas.drawLine(i - 1, (float) accTemp1.y, i, (float) accTemp2.y, yPaint);
-//                    accCanvas.drawLine(i - 1, (float) accTemp1.z, i, (float) accTemp2.z, zPaint);
-//                }
-//                accHolder.unlockCanvasAndPost(accCanvas);
-//                break;
             case GYR:
 //                Canvas gyrCanvas = gyrHolder.lockCanvas(null);
 //                gyrCanvas.drawColor(Color.WHITE);
@@ -306,6 +295,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     p1 = new Point(400 + p1.x, midPathHeight - p1.y);
                     Point p2 = gyrPath.get(i);
                     p2 = new Point(400 + p2.x, midPathHeight - p2.y);
+                    pathCanvas.drawLine((float) p1.x, (float) p1.y, (float) p2.x, (float) p2.y, yPaint);
+                }
+                for (int i = 1; i < uncGyrPath.size(); i++) {
+                    Point p1 = uncGyrPath.get(i - 1);
+                    p1 = new Point(400 + p1.x, midPathHeight - p1.y);
+                    Point p2 = uncGyrPath.get(i);
+                    p2 = new Point(400 + p2.x, midPathHeight - p2.y);
                     pathCanvas.drawLine((float) p1.x, (float) p1.y, (float) p2.x, (float) p2.y, zPaint);
                 }
                 for (int i = 1; i < magPath.size(); i++) {
@@ -325,18 +321,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 pathHolder.unlockCanvasAndPost(pathCanvas);
                 break;
             case ORIENTATION:
-//                Canvas magCanvas = magHolder.lockCanvas(null);
-//                magCanvas.drawColor(Color.WHITE);
-//                for (int i = 1; i < oris.size(); i++) {
-//                    TriaxialData magTemp1 = oris.get(i - 1);
-//                    magTemp1 = new TriaxialData(midMagHeight - magTemp1.x / 300 * midMagHeight, midMagHeight - magTemp1.y / 300 * midMagHeight, midMagHeight - magTemp1.z / 300 * midMagHeight, magTemp1.timestamp);
-//                    TriaxialData magTemp2 = oris.get(i);
-//                    magTemp2 = new TriaxialData(midMagHeight - magTemp2.x / 300 * midMagHeight, midMagHeight - magTemp2.y / 300 * midMagHeight, midMagHeight - magTemp2.z / 300 * midMagHeight, magTemp2.timestamp);
-//                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.x, i * 10, (float) magTemp2.x, xPaint);
-//                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.y, i * 10, (float) magTemp2.y, yPaint);
-//                    magCanvas.drawLine((i - 1) * 10, (float) magTemp1.z, i * 10, (float) magTemp2.z, zPaint);
-//                }
-//                magHolder.unlockCanvasAndPost(magCanvas);
                 float x = oris.get(oris.size() - 1).getX();
                 Line gyrLine = new Line(gyrOris).setColor(Color.BLUE).setCubic(false).setStrokeWidth(1).setHasPoints(false);
                 Line magLine = new Line(magOris).setColor(Color.RED).setCubic(false).setStrokeWidth(1).setHasPoints(false);
@@ -363,44 +347,44 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     private void clearLists() {
-        acc.clear(); acc.add(new Acceleration());
-        gyr.clear(); gyr.add(new AngularVelocity());
+        if (gyr.isEmpty()) {
+            gyr.clear();
+            gyr.add(new AngularVelocity());
+        } else {
+            AngularVelocity avTemp = gyr.get(gyr.size() - 1);
+            gyr.clear();
+            gyr.add(avTemp);
+        }
         mag.clear(); mag.add(new MagneticField());
     }
 
     private void clearTrack() {
         clearLists();
-//        clearDraw();
+        gyr.clear(); gyr.add(new AngularVelocity());
         gyrPath.clear(); gyrPath.add(new Point());
+        uncGyrPath.clear(); uncGyrPath.add(new Point());
         magPath.clear(); magPath.add(new Point());
         path.clear(); path.add(new Point());
-//        gyrOris.clear(); gyrOris.add(0.0);
-//        magOris.clear(); magOris.add(0.0);
-//        oris.clear(); oris.add(new TriaxialData());
         gyrOris.clear();
         magOris.clear();
         oris.clear();
+
+        initAngle = false;
         initGyrHeading = 0;
-        initGyrStepCount = 0;
+
         calibrateGyrStepCount = 0;
         calibrateGyrOrientationSum = 0;
-        initGyrMagSum = 0;
+
         lastGyrOrientation = 0;
         lastMagOrientation = 720;
         lastStepOrientation = 720;
-        initAngle = false;
+
         gravity = null;
     }
 
     private void clearDraw() {
-//        Canvas gyrCanvas = gyrHolder.lockCanvas(null);
-//        Canvas magCanvas = magHolder.lockCanvas(null);
         Canvas pathCanvas = pathHolder.lockCanvas(null);
-//        gyrCanvas.drawColor(Color.BLACK);
-//        magCanvas.drawColor(Color.BLACK);
         pathCanvas.drawColor(Color.BLACK);
-//        gyrHolder.unlockCanvasAndPost(gyrCanvas);
-//        magHolder.unlockCanvasAndPost(magCanvas);
         pathHolder.unlockCanvasAndPost(pathCanvas);
     }
 
@@ -431,10 +415,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
      */
     private double getGyrDiff() {
         TriaxialData avSum = new TriaxialData();
-        for (int i = 2; i < gyr.size(); i++) {
+        for (int i = 1; i < gyr.size(); i++) {
             AngularVelocity temp1 = gyr.get(i - 1);
+            if (temp1.timestamp == 0) continue;
             AngularVelocity temp2 = gyr.get(i);
-            avSum = avSum.add(temp1.add(temp2).times(Math.abs(temp1.timestamp - temp2.timestamp) * NS2S / 2 * RAD2DEG));
+            if (i == 1) {
+                avSum = avSum.add(temp1.add(temp2).times(Math.abs(temp1.timestamp - temp2.timestamp) * NS2S * RAD2DEG));
+            } else {
+                avSum = avSum.add(temp1.add(temp2).times(Math.abs(temp1.timestamp - temp2.timestamp) * NS2S / 2 * RAD2DEG));
+            }
         }
         // 陀螺仪的值似乎是北向转西向为正，故返回相反数
         return -avSum.z;
@@ -443,7 +432,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private double fuseOrientations(double[] orientations, double[] weights) {
         ArrayList<Double> list = new ArrayList<>();
         for (int i = 0; i < weights.length; i++) {
-            int num = (int) Math.round(weights[i] * 100);
+            int num = (int) Math.round(weights[i] * 1000);
             for (int j = 0; j < num; j++) {
                 list.add(orientations[i]);
             }
@@ -452,28 +441,36 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     private double[] getGyrAndMagOrientation() {
+        int flag = 0;
         double magOrientation = getMagOrientation();
         double gyrOrientationDiff = getGyrDiff();
         double gyrOrientation = 720;
-        initGyrMagSum += magOrientation;
-        initGyrStepCount++;
+        double uncalibratedGyrOrientation = 720;
         if (!initAngle) {
-            if (Math.abs(gyrOrientationDiff) > 30) {
-                initGyrStepCount = 0;
-                initGyrMagSum = 0;
+            if (Math.abs(gyrOrientationDiff) > 20) {
+                initGyrMagList.clear();
                 Toast.makeText(this, "clear magsum", Toast.LENGTH_SHORT).show();
+            } else {
+                initGyrMagList.add(magOrientation);
             }
-            if (initGyrStepCount > 10) {
+            if (initGyrMagList.size() > 10) {
                 initAngle = true;
-                initGyrHeading = initGyrMagSum / initGyrStepCount;
-                initGyrStepCount = 0;
-                initGyrMagSum = 0;
+                initGyrHeading = AngleUtils.calculateAngle325(initGyrMagList);
+                initGyrMagList.clear();
                 gyrOrientation = initGyrHeading;
+                uncalibratedGyrOrientation = initGyrHeading;
             }
         } else {
             gyrOrientation = lastGyrOrientation + gyrOrientationDiff;
+            uncalibratedGyrOrientation = lastUncalibratedGyrOrientation + gyrOrientationDiff;
             while (gyrOrientation > 180) gyrOrientation -= 360;
             while (gyrOrientation < -180) gyrOrientation += 360;
+            while (uncalibratedGyrOrientation > 180) uncalibratedGyrOrientation -= 360;
+            while (uncalibratedGyrOrientation < -180) uncalibratedGyrOrientation += 360;
+        }
+
+        if (!Config.useGyr) {
+            gyrOrientation = 720;
         }
 
         double stepOrientation;
@@ -485,61 +482,107 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             if (lastStepOrientation == 720) {
                 stepOrientation = magOrientation;
             } else {
-                if (lastMagOrientation != 720 && thetaM > 30) {
-                    double[] orientations = {lastStepOrientation, magOrientation};
-                    double[] weights = {0.5, 0.5};
-                    stepOrientation = fuseOrientations(orientations, weights);
+                if (lastMagOrientation != 720 && thetaM > 15) {
+                    if (gyrOrientationDiff < 10) {
+                        double[] orientations = {lastStepOrientation, magOrientation};
+                        double[] weights = {0.8, 0.2};
+                        stepOrientation = fuseOrientations(orientations, weights);
+                    } else {
+                        double[] orientations = {lastStepOrientation, magOrientation};
+                        double[] weights = {0.2, 0.8};
+                        stepOrientation = fuseOrientations(orientations, weights);
+                    }
                 } else {
                     double[] orientations = {lastStepOrientation, magOrientation};
-                    double[] weights = {0.2, 0.8};
+                    double[] weights = {0.5, 0.5};
                     stepOrientation = fuseOrientations(orientations, weights);
                 }
             }
             gyrOrientation = stepOrientation;
+            uncalibratedGyrOrientation = stepOrientation;
         } else {
-            if (thetaC <= thetaCThreshold && thetaM <= thetaMThreshold ) {
-                double[] orientations = {lastStepOrientation, magOrientation, gyrOrientation};
-                double[] weights = {0.2, 0.5, 0.3};
+            double[] orientations = {lastStepOrientation, magOrientation, gyrOrientation};
+            if (thetaC <= thetaCThreshold && thetaM <= thetaMThreshold) {
+                double[] weights = {0.3, 0.5, 0.2};
                 stepOrientation = fuseOrientations(orientations, weights);
+                flag = 1;
             } else if (thetaC <= thetaCThreshold && thetaM > thetaMThreshold) {
-                double[] orientations = {magOrientation, gyrOrientation};
-                double[] weights = {0.4, 0.6};
+                double[] weights = {0, 0.25, 0.75};
                 stepOrientation = fuseOrientations(orientations, weights);
+                flag = 2;
             } else if (thetaC > thetaCThreshold && thetaM <= thetaMThreshold) {
-                double[] orientations = {lastStepOrientation, magOrientation};
-                double[] weights = {0.8, 0.2};
-                stepOrientation = fuseOrientations(orientations, weights);
+                flag = 3;
+                if (gyrOrientationDiff < 2) {
+                    double[] weights = {0.895, 0.005, 0.1};
+//                    double[] weights = {0.7, 0.055, 0.245};
+                    stepOrientation = fuseOrientations(orientations, weights);
+                } else {
+                    double[] weights = {0.85, 0.05, 0.1};
+                    stepOrientation = fuseOrientations(orientations, weights);
+                }
             } else {
-                double[] orientations = {lastStepOrientation, gyrOrientation};
-                double[] weights = {0.4, 0.6};
-                stepOrientation = fuseOrientations(orientations, weights);
+                flag = 4;
+                if (gyrOrientationDiff < 10) {
+                    double[] weights = {0.2, 0, 0.8};
+                    stepOrientation = fuseOrientations(orientations, weights);
+                } else {
+                    double[] weights = {0.2, 0.2, 0.6};
+                    stepOrientation = fuseOrientations(orientations, weights);
+                }
             }
         }
-        double stepDiff = Math.abs(lastStepOrientation - stepOrientation);
-        if (stepDiff > 180) stepDiff = 360 - stepDiff;
-        if (lastStepOrientation != 720 && stepDiff < 20) {
-            calibrateGyrStepCount++;
-//            calibrateGyrOrientationSum += stepOrientation;
-        }
-        if (calibrateGyrStepCount == 10) {
-            Toast.makeText(this, "calibrate gyr", Toast.LENGTH_SHORT).show();
-            gyrOrientation = stepOrientation;
-            calibrateGyrStepCount = 0;
-//            calibrateGyrOrientationSum = 0;
+
+        if (Config.calibrateGyr) {
+            double calibrateMagOri = 720; int magFlag = 0;
+            double calibrateStepOri = 720; int stepFlag = 0;
+            double stepDiff = Math.abs(lastStepOrientation - stepOrientation);
+            if (stepDiff > 180) stepDiff = 360 - stepDiff;
+            if (lastStepOrientation != 720 && stepDiff < 5) {
+                calibrateGyrStepCount++;
+            } else {
+                calibrateGyrStepCount = 0;
+            }
+            if (calibrateGyrStepCount == 20) {
+                Toast.makeText(this, "calibrate gyr", Toast.LENGTH_SHORT).show();
+                calibrateStepOri = stepOrientation; // 取当前一步的方向作为绝对方向来校准陀螺仪的方向，可以改成求前几步的加权平均，类似下面地磁的处理。
+                stepFlag = 1;
+                calibrateGyrStepCount = 0;
+            }
+
+//            if (gyrOrientationDiff < 5) {
+//                calibrateGyrMagList.add(magOrientation);
+//            } else {
+//                calibrateGyrMagList.clear();
+//            }
+//            if (calibrateGyrMagList.size() == 40) {
+//                calibrateMagOri = AngleUtils.calculateAngle325(calibrateGyrMagList); // 取前几步地磁的平均作为绝对方向来校准陀螺仪的方向。
+//                magFlag = 1;
+//                calibrateGyrMagList.clear();
+//            }
+
+            if (magFlag + stepFlag == 1) {
+                gyrOrientation = calibrateMagOri * magFlag + calibrateStepOri * stepFlag;
+            } else if (magFlag + stepFlag == 2) {
+                ArrayList<Double> list = new ArrayList<Double>();
+                list.add(calibrateMagOri);
+                list.add(calibrateStepOri);
+                gyrOrientation = AngleUtils.calculateAngle325(list);
+            }
         }
 
-        gyrOris.add(new PointValue(orientationCount, (float) gyrOrientation));
+//        gyrOris.add(new PointValue(orientationCount, (float) gyrOrientation));
+        gyrOris.add(new PointValue(orientationCount, (float) uncalibratedGyrOrientation));
         magOris.add(new PointValue(orientationCount, (float) magOrientation));
         oris.add(new PointValue(orientationCount, (float) stepOrientation));
         orientationCount++;
-//        if (oris.size() > viewWidth) oris.remove(0);
         draw(ORIENTATION);
 
         lastGyrOrientation = gyrOrientation;
+        lastUncalibratedGyrOrientation = uncalibratedGyrOrientation;
         lastMagOrientation = magOrientation;
         lastStepOrientation = stepOrientation;
 
-        double[] orientations = {gyrOrientation, magOrientation, stepOrientation};
+        double[] orientations = {flag, gyrOrientation, uncalibratedGyrOrientation, magOrientation, stepOrientation};
         clearLists();
 
         return orientations;
@@ -561,19 +604,34 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 StepDetectedCallBack stepDetectedCallBack = new StepDetectedCallBack() {
                     @Override
                     public void onStepDetected(int stepCount) {
+                        if (logdata) {
+                            try {
+                                fos.write("step\n".getBytes());
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            }
+                        }
+
+                        // 计算当前这一步的方向，包括陀螺仪的校准和未校准的方向，地磁的方向和融合的方向
                         double[] ori = getGyrAndMagOrientation();
-                        infoTxt.setText("stepcount " + stepCount + "\ngyr " + ori[0] + "\nmag " + ori[1] + "\nstep " + ori[2]);
+                        infoTxt.setText("stepcount " + stepCount + "\ngyr " + ori[1] + "\nmag " + ori[3] + "\nstep " + ori[4]);
+
+                        // 算出各个轨迹下一个点的坐标保存到各自的list中并画出来
                         Point next = new Point();
-                        next.x = gyrPath.get(gyrPath.size() - 1).x + STEP_LENGTH * Math.sin(ori[0] / RAD2DEG);
-                        next.y = gyrPath.get(gyrPath.size() - 1).y + STEP_LENGTH * Math.cos(ori[0] / RAD2DEG);
+                        next.x = gyrPath.get(gyrPath.size() - 1).x + STEP_LENGTH * Math.sin(ori[1] / RAD2DEG);
+                        next.y = gyrPath.get(gyrPath.size() - 1).y + STEP_LENGTH * Math.cos(ori[1] / RAD2DEG);
                         gyrPath.add(next);
                         next = new Point();
-                        next.x = magPath.get(magPath.size() - 1).x + STEP_LENGTH * Math.sin(ori[1] / RAD2DEG);
-                        next.y = magPath.get(magPath.size() - 1).y + STEP_LENGTH * Math.cos(ori[1] / RAD2DEG);
+                        next.x = uncGyrPath.get(uncGyrPath.size() - 1).x + STEP_LENGTH * Math.sin(ori[2] / RAD2DEG);
+                        next.y = uncGyrPath.get(uncGyrPath.size() - 1).y + STEP_LENGTH * Math.cos(ori[2] / RAD2DEG);
+                        uncGyrPath.add(next);
+                        next = new Point();
+                        next.x = magPath.get(magPath.size() - 1).x + STEP_LENGTH * Math.sin(ori[3] / RAD2DEG);
+                        next.y = magPath.get(magPath.size() - 1).y + STEP_LENGTH * Math.cos(ori[3] / RAD2DEG);
                         magPath.add(next);
                         next = new Point();
-                        next.x = path.get(path.size() - 1).x + STEP_LENGTH * Math.sin(ori[2] / RAD2DEG);
-                        next.y = path.get(path.size() - 1).y + STEP_LENGTH * Math.cos(ori[2] / RAD2DEG);
+                        next.x = path.get(path.size() - 1).x + STEP_LENGTH * Math.sin(ori[4] / RAD2DEG);
+                        next.y = path.get(path.size() - 1).y + STEP_LENGTH * Math.cos(ori[4] / RAD2DEG);
                         path.add(next);
                         draw(PATH);
                     }
@@ -592,8 +650,63 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         fos.close();
                     } catch (IOException e) {
                         Toast.makeText(this, "BufferedWriter Flush Error", Toast.LENGTH_SHORT).show();
+                    } finally {
+                        try {
+                            fos.close();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
                     }
                     getFileReady();
+                }
+                break;
+            case R.id.replay_btn:
+                clearTrack();
+                Toast.makeText(this, "replay", Toast.LENGTH_SHORT).show();
+
+                if (Config.device == Config.DEVICE6) {
+                    FileInputStream fis;
+                    try {
+                        fis = this.openFileInput("SensorDataLogFile.txt");
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        byte[] buffer = new byte[1024];
+                        int len = 0;
+                        while ((len = fis.read(buffer)) != -1) {
+                            baos.write(buffer, 0, len);
+                        }
+                        Toast.makeText(this, "" + len, Toast.LENGTH_SHORT).show();
+                        byte[] data = baos.toByteArray();
+                        String[] lines = new String(data).split("\n");
+                        for (String line : lines) {
+                            processLine(line);
+                        }
+                        fis.close();
+                        //                    Toast.makeText(this, new String(data), Toast.LENGTH_SHORT).show();
+                    } catch (FileNotFoundException e) {
+                        Toast.makeText(this, "FileNotFoundException", Toast.LENGTH_SHORT).show();
+                    } catch (IOException e) {
+                        Toast.makeText(this, "IOException", Toast.LENGTH_SHORT).show();
+                    }
+                } else {
+                    File file = new File(Environment.getExternalStorageDirectory()+"//Heading//SensorDataLogFile.txt");
+                    BufferedReader br = null;
+                    try {
+                        br = new BufferedReader(new FileReader(file));
+                        String line = br.readLine();
+                        while (null != line) {
+                            processLine(line);
+                            line = br.readLine();
+                        }
+                        br.close();
+                    } catch (IOException e) {
+                        Toast.makeText(this, "FileReader Error", Toast.LENGTH_SHORT).show();
+                    } finally {
+                        try {
+                            br.close();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
                 }
                 break;
             default:
@@ -601,30 +714,82 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
-    private void calcRotationMatrix() {
-        Acceleration g = new Acceleration();
-        MagneticField m = new MagneticField();
-        for (Acceleration accIdx : acc) {
-            g = g.add(accIdx);
+    private void processLine(String line) {
+        String[] data = line.split(" ");
+        switch (data[0]) {
+            case "gyr":
+                AngularVelocity gyrTemp = new AngularVelocity(Float.parseFloat(data[1]), Float.parseFloat(data[2]), Float.parseFloat(data[3]), Long.parseLong(data[4]));
+                if (null != gravity) {
+                    AngularVelocity gyrZ = gravity.times(gravity.times(gyrTemp) / gravity.normSquare()).toAv();
+                    gyr.add(gyrZ);
+                }
+                break;
+            case "mag":
+                lastMag = new MagneticField(Float.parseFloat(data[1]), Float.parseFloat(data[2]), Float.parseFloat(data[3]), Long.parseLong(data[4]));
+                // 求地磁的水平分量
+                if (null != gravity) {
+                    // 地磁的水平分量是通过地磁向量减去竖直分量得到的，而竖直分量则为地磁向量在重力向量上的投影乘上重力向量的单位向量
+                    MagneticField magH = lastMag.substract(gravity.times(gravity.times(lastMag) / gravity.normSquare()).toMag());
+                    mag.add(magH);
+                }
+                break;
+            case "gra":
+                Acceleration gTemp = new Acceleration(Float.parseFloat(data[1]), Float.parseFloat(data[2]), Float.parseFloat(data[3]), Long.parseLong(data[4]));
+                if (gCount == 10) {
+                    gravity = gTemp;
+                } else {
+                    gCount++;
+                }
+                break;
+            case "step":
+                double[] ori = getGyrAndMagOrientation();
+                Point next = new Point();
+                next.x = gyrPath.get(gyrPath.size() - 1).x + STEP_LENGTH * Math.sin(ori[1] / RAD2DEG);
+                next.y = gyrPath.get(gyrPath.size() - 1).y + STEP_LENGTH * Math.cos(ori[1] / RAD2DEG);
+                gyrPath.add(next);
+                next = new Point();
+                next.x = uncGyrPath.get(uncGyrPath.size() - 1).x + STEP_LENGTH * Math.sin(ori[2] / RAD2DEG);
+                next.y = uncGyrPath.get(uncGyrPath.size() - 1).y + STEP_LENGTH * Math.cos(ori[2] / RAD2DEG);
+                uncGyrPath.add(next);
+                next = new Point();
+                next.x = magPath.get(magPath.size() - 1).x + STEP_LENGTH * Math.sin(ori[3] / RAD2DEG);
+                next.y = magPath.get(magPath.size() - 1).y + STEP_LENGTH * Math.cos(ori[3] / RAD2DEG);
+                magPath.add(next);
+                next = new Point();
+                next.x = path.get(path.size() - 1).x + STEP_LENGTH * Math.sin(ori[4] / RAD2DEG);
+                next.y = path.get(path.size() - 1).y + STEP_LENGTH * Math.cos(ori[4] / RAD2DEG);
+                path.add(next);
+                draw(PATH);
+                break;
+            default:
+                break;
         }
-        for (MagneticField magIdx : mag) {
-            m = m.add(magIdx);
-        }
-
-        g.times(1 / acc.size());
-        m.times(1 / mag.size());
-
-        float[] RMTemp = new float[9];
-        float[] IMTemp = new float[9];
-        SensorManager.getRotationMatrix(RMTemp, IMTemp, g.toFloatArray(), m.toFloatArray());    // 得到从载体坐标系到导航坐标系的转换矩阵RM和磁偏矩阵IM
-        float[] orientationTemp = new float[3];
-        SensorManager.getOrientation(RMTemp, orientationTemp);
-        orientation = floatArrayToDoubleArray(orientationTemp);
-
-        RM = new Matrix(floatArrayToDoubleArray(RMTemp), 3);
-        IM = new Matrix(floatArrayToDoubleArray(IMTemp), 3);
-        infoTxt.setText(String.format("Orientation:\nAzimuth:%.5f     Pitch:%.5f     Roll:%.5f", orientation[0] * RAD2DEG, orientation[1] * RAD2DEG, orientation[2] * RAD2DEG));
     }
+
+//    private void calcRotationMatrix() {
+//        Acceleration g = new Acceleration();
+//        MagneticField m = new MagneticField();
+//        for (Acceleration accIdx : acc) {
+//            g = g.add(accIdx);
+//        }
+//        for (MagneticField magIdx : mag) {
+//            m = m.add(magIdx);
+//        }
+//
+//        g.times(1 / acc.size());
+//        m.times(1 / mag.size());
+//
+//        float[] RMTemp = new float[9];
+//        float[] IMTemp = new float[9];
+//        SensorManager.getRotationMatrix(RMTemp, IMTemp, g.toFloatArray(), m.toFloatArray());    // 得到从载体坐标系到导航坐标系的转换矩阵RM和磁偏矩阵IM
+//        float[] orientationTemp = new float[3];
+//        SensorManager.getOrientation(RMTemp, orientationTemp);
+//        orientation = floatArrayToDoubleArray(orientationTemp);
+//
+//        RM = new Matrix(floatArrayToDoubleArray(RMTemp), 3);
+//        IM = new Matrix(floatArrayToDoubleArray(IMTemp), 3);
+//        infoTxt.setText(String.format("Orientation:\nAzimuth:%.5f     Pitch:%.5f     Roll:%.5f", orientation[0] * RAD2DEG, orientation[1] * RAD2DEG, orientation[2] * RAD2DEG));
+//    }
 
     private double[] floatArrayToDoubleArray(float[] a) {
         double[] res = new double[a.length];
@@ -645,20 +810,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     @Override
     public void onSensorChanged(SensorEvent event) {
         switch (event.sensor.getType()) {
-            case Sensor.TYPE_ACCELEROMETER:
-                if (logdata) {
-                    try {
-                        fos.write(("acc " + event.values[0] + " " + event.values[1] + " " + event.values[2] + " " + event.timestamp + "\n").getBytes());
-                    } catch (IOException e) {
-                        Toast.makeText(this, "BufferedWriter Write Error", Toast.LENGTH_SHORT).show();
-                    }
-                }
-//                accTxt.setText(String.format("Acc    x:%.5f    y:%.5f    z:%.5f", event.values[0], event.values[1], event.values[2]));
-                Acceleration accCurrent = new Acceleration(event.values[0], event.values[1], event.values[2], event.timestamp);
-//                if (hasGravity) {
-//                    accCurrent = accCurrent.substract(gravity);
+//            case Sensor.TYPE_ACCELEROMETER:
+//                if (logdata) {
+//                    try {
+//                        fos.write(("acc " + event.values[0] + " " + event.values[1] + " " + event.values[2] + " " + event.timestamp + "\n").getBytes());
+//                    } catch (IOException e) {
+//                        Toast.makeText(this, "BufferedWriter Write Error", Toast.LENGTH_SHORT).show();
+//                    }
 //                }
-                acc.add(accCurrent);
+//                accTxt.setText(String.format("Acc    x:%.5f    y:%.5f    z:%.5f", event.values[0], event.values[1], event.values[2]));
+//                Acceleration accCurrent = new Acceleration(event.values[0], event.values[1], event.values[2], event.timestamp);
+////                if (hasGravity) {
+////                    accCurrent = accCurrent.substract(gravity);
+////                }
+//                acc.add(accCurrent);
 
 //                Acceleration a = acc.get(acc.size() - 1);
 //                AngularVelocity g = gyr.get(gyr.size() - 1);
@@ -709,7 +874,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 //                    draw(ACC);
 //                    accCount = 0;
 //                }
-                break;
+//                break;
             case Sensor.TYPE_GYROSCOPE:
                 if (logdata) {
                     try {
