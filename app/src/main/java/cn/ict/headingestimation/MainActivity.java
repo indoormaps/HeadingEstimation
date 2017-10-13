@@ -1,5 +1,6 @@
 package cn.ict.headingestimation;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -12,13 +13,19 @@ import android.os.Build;
 import android.os.Environment;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.view.LayoutInflater;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import org.w3c.dom.Text;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -29,6 +36,7 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 
 import Jama.*;
 
@@ -91,6 +99,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private double lastUncalibratedGyrOrientation = 720;
     private double thetaCThreshold = Config.thetaCThreshold;
     private double thetaMThreshold = Config.thetaMThreshold;
+    private int[] countMethod = new int[4];
 
     private Matrix RM, IM;
 
@@ -113,6 +122,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private File dir;
     private FileOutputStream fos;
+    private String replayFileName;
 
     StepDetectionProvider stepDetectionProvider;
 
@@ -359,6 +369,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     private void clearTrack() {
+        countMethod = new int[4];
         clearLists();
         gyr.clear(); gyr.add(new AngularVelocity());
         gyrPath.clear(); gyrPath.add(new Point());
@@ -446,6 +457,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         double gyrOrientationDiff = getGyrDiff();
         double gyrOrientation = 720;
         double uncalibratedGyrOrientation = 720;
+        double calibratedMagOrientation = 720;
         if (!initAngle) {
             if (Math.abs(gyrOrientationDiff) > 20) {
                 initGyrMagList.clear();
@@ -475,6 +487,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         double stepOrientation;
         double thetaC = Math.abs(magOrientation - gyrOrientation);
+//        double thetaC = Math.abs(gyrOrientation - lastGyrOrientation);
         if (thetaC > 180) thetaC = 360 - thetaC;
         double thetaM = Math.abs(magOrientation - lastMagOrientation);
         if (thetaM > 180) thetaM = 360 - thetaM;
@@ -504,14 +517,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             double[] orientations = {lastStepOrientation, magOrientation, gyrOrientation};
             if (thetaC <= thetaCThreshold && thetaM <= thetaMThreshold) {
                 double[] weights = {0.3, 0.5, 0.2};
+//                double[] weights = {0.3, 0.4, 0.3};
                 stepOrientation = fuseOrientations(orientations, weights);
                 flag = 1;
+                countMethod[0]++;
             } else if (thetaC <= thetaCThreshold && thetaM > thetaMThreshold) {
                 double[] weights = {0, 0.25, 0.75};
                 stepOrientation = fuseOrientations(orientations, weights);
                 flag = 2;
+                countMethod[1]++;
             } else if (thetaC > thetaCThreshold && thetaM <= thetaMThreshold) {
                 flag = 3;
+                countMethod[2]++;
                 if (gyrOrientationDiff < 2) {
                     double[] weights = {0.895, 0.005, 0.1};
 //                    double[] weights = {0.7, 0.055, 0.245};
@@ -522,9 +539,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 }
             } else {
                 flag = 4;
+                countMethod[3]++;
                 if (gyrOrientationDiff < 10) {
                     double[] weights = {0.2, 0, 0.8};
                     stepOrientation = fuseOrientations(orientations, weights);
+                    calibratedMagOrientation = stepOrientation;
                 } else {
                     double[] weights = {0.2, 0.2, 0.6};
                     stepOrientation = fuseOrientations(orientations, weights);
@@ -662,7 +681,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 break;
             case R.id.replay_btn:
                 clearTrack();
-                Toast.makeText(this, "replay", Toast.LENGTH_SHORT).show();
+//                Toast.makeText(this, "replay", Toast.LENGTH_SHORT).show();
 
                 if (Config.device == Config.DEVICE6) {
                     FileInputStream fis;
@@ -681,14 +700,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                             processLine(line);
                         }
                         fis.close();
-                        //                    Toast.makeText(this, new String(data), Toast.LENGTH_SHORT).show();
                     } catch (FileNotFoundException e) {
                         Toast.makeText(this, "FileNotFoundException", Toast.LENGTH_SHORT).show();
                     } catch (IOException e) {
                         Toast.makeText(this, "IOException", Toast.LENGTH_SHORT).show();
                     }
                 } else {
+//                    File dir = new File(Environment.getExternalStorageDirectory()+"//Heading//");
+//                    Toast.makeText(this, "" + dir.isDirectory(), Toast.LENGTH_SHORT).show();
+//                    actionAlertDialog(dir.listFiles());
                     File file = new File(Environment.getExternalStorageDirectory()+"//Heading//SensorDataLogFile.txt");
+//                    Toast.makeText(this, replayFileName, Toast.LENGTH_SHORT).show();
+//                    File file = new File(replayFileName);
                     BufferedReader br = null;
                     try {
                         br = new BufferedReader(new FileReader(file));
@@ -708,10 +731,76 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         }
                     }
                 }
+                infoTxt.setText("1:" + countMethod[0] + "    2:" + countMethod[1] + "    3:" + countMethod[2] + "    4:" + countMethod[3]);
                 break;
             default:
                 break;
         }
+    }
+
+    class ListViewAdapter extends BaseAdapter {
+
+        Context context;
+        File[] list;
+        private LayoutInflater inflater;
+
+        ListViewAdapter(Context context, File[] list) {
+            this.context = context;
+            this.list = list;
+            inflater = LayoutInflater.from(context);
+        }
+
+        @Override
+        public int getCount() {
+            return list.length;
+        }
+
+        @Override
+        public File getItem(int position) {
+            return list[position];
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        @Override
+        public View getView(final int position, View convertView, ViewGroup parent) {
+            Holder holder;
+            if (null == convertView) {
+                holder = new Holder();
+                convertView = inflater.inflate(R.layout.item, null);
+                holder.fileName = (TextView) convertView.findViewById(R.id.item_name);
+                convertView.setTag(holder);
+            } else {
+                holder = (Holder) convertView.getTag();
+            }
+            holder.fileName.setText(list[position].toString());
+            holder.fileName.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    replayFileName = list[position].toString();
+                }
+            });
+            return null;
+        }
+
+        protected class Holder {
+            TextView fileName;
+        }
+    }
+
+    private void actionAlertDialog(File[] list) {
+        LayoutInflater inflater = (LayoutInflater) this.getSystemService(LAYOUT_INFLATER_SERVICE);
+        View layout = inflater.inflate(R.layout.list_view, (ViewGroup) findViewById(R.id.layout_list_view));
+        ListView listView = (ListView) layout.findViewById(R.id.file_listview);
+        ListViewAdapter adapter = new ListViewAdapter(this, list);
+        listView.setAdapter(adapter);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setView(layout);
+        AlertDialog alertDialog = builder.create();
+        alertDialog.show();
     }
 
     private void processLine(String line) {

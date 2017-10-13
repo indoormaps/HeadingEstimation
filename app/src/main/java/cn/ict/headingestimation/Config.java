@@ -8,7 +8,7 @@ public class Config {
     public static int device = 1;
     public final static int DEVICE442 = 1;
     public final static int DEVICE6 = 2;
-    public final static boolean logdata = false;
+    public final static boolean logdata = true;
     public final static boolean calibrateGyr = true;
     public final static boolean useGyr = true;
 
